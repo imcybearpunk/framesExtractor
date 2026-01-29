@@ -5,28 +5,30 @@ import os
 import shutil
 import zipfile
 
-# Título de la App Web
-st.set_page_config(page_title="Extractor de Frames IA", page_icon="🎬")
-st.title("🎬 Extractor de Frames para IA")
-st.write("Sube videos de YouTube, extrae frames y descárgalos en ZIP.")
+# Título y Configuración
+st.set_page_config(page_title="Extractor IA Pro", page_icon="🎬")
+st.title("🎬 Extractor de Frames IA (Versión Cloud)")
+st.warning("⚠️ Nota: YouTube bloquea frecuentemente servidores en la nube. Si este método falla con 'Error 403', usa tu versión de Escritorio (Mac) que es infalible.")
 
 # --- ENTRADAS DE USUARIO ---
 url = st.text_input("🔗 Link de YouTube")
+
 col1, col2, col3 = st.columns(3)
 with col1:
-    fps_input = st.selectbox("FPS de Extracción", [5, 8, 12, 15, 24, 30, 60], index=3)
+    # AHORA ES UN CAMPO NUMÉRICO LIBRE
+    fps_input = st.number_input("FPS de Extracción", min_value=0.1, max_value=60.0, value=15.0, step=1.0, format="%.2f")
 with col2:
     res_input = st.selectbox("Resolución (Altura)", ["512p", "720p", "1080p", "Original"], index=1)
 with col3:
     sufijo = st.text_input("Sufijo (ej: _input)", value="_input")
 
-# --- LÓGICA DE PROCESAMIENTO ---
+# --- LÓGICA ---
 def procesar_video():
     if not url:
         st.error("¡Pega un link primero!")
         return
 
-    # Crear carpetas temporales
+    # Limpiar y crear temporales
     work_dir = "temp_workspace"
     if os.path.exists(work_dir): shutil.rmtree(work_dir)
     os.makedirs(work_dir)
@@ -37,25 +39,41 @@ def procesar_video():
     status_text = st.empty()
     progress_bar = st.progress(0)
 
-    # 1. Descargar
-    status_text.text("⬇️ Descargando video...")
+    # 1. INTENTO DE DESCARGA ANTI-BLOQUEO
+    status_text.text("⬇️ Intentando descargar (evitando bloqueo 403)...")
     video_path = os.path.join(work_dir, "video.mp4")
-    ydl_opts = {'format': 'best[ext=mp4]', 'outtmpl': video_path, 'quiet': True}
+    
+    # Opciones avanzadas para parecer un navegador real
+    ydl_opts = {
+        'format': 'best[ext=mp4]/best',
+        'outtmpl': video_path,
+        'quiet': True,
+        'nocheckcertificate': True,
+        'user_agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'referer': 'https://www.youtube.com/',
+    }
     
     try:
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([url])
     except Exception as e:
-        st.error(f"Error descargando: {e}")
+        st.error(f"❌ YouTube bloqueó la descarga: {e}")
+        st.info("💡 Solución: Este error pasa porque YouTube sabe que esto es un servidor. Por favor usa la App de Escritorio que creamos en tu Mac, esa usa tu IP de casa y NO fallará.")
+        shutil.rmtree(work_dir) # Limpieza
         return
 
-    # 2. Procesar con OpenCV
-    status_text.text("📸 Extrayendo frames... (esto toma tiempo)")
+    # 2. PROCESAR
+    status_text.text(f"📸 Extrayendo a {fps_input} FPS... (Paciencia)")
     cap = cv2.VideoCapture(video_path)
-    fps_orig = cap.get(cv2.CAP_PROP_FPS)
-    step = fps_orig / float(fps_input)
     
-    # Calcular resolucion
+    if not cap.isOpened():
+        st.error("Error al abrir el video descargado.")
+        return
+
+    fps_orig = cap.get(cv2.CAP_PROP_FPS)
+    step = fps_orig / fps_input
+    
+    # Resolución
     h_orig = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
     w_orig = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
     target_h = h_orig
@@ -81,32 +99,30 @@ def procesar_video():
             count += 1
             nxt += step
             
-            # Actualizar barra
             if total_estimated > 0:
                 prog = min(count / total_estimated, 1.0)
                 progress_bar.progress(prog)
 
     cap.release()
     progress_bar.progress(100)
-    status_text.text("✅ ¡Listo! Comprimiendo ZIP...")
+    status_text.text("✅ ¡Listo! Creando ZIP...")
 
-    # 3. Crear ZIP
+    # 3. ZIP Y DESCARGA
     zip_path = "frames_resultado.zip"
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
         for root, dirs, files in os.walk(frames_dir):
             for file in files:
                 zipf.write(os.path.join(root, file), file)
 
-    # 4. Botón de Descarga
     with open(zip_path, "rb") as f:
         st.download_button(
-            label="📥 DESCARGAR ZIP CON FRAMES",
+            label=f"📥 BAJAR FRAMES ({count} imgs)",
             data=f,
             file_name=f"frames_{fps_input}fps.zip",
             mime="application/zip"
         )
     
-    # Limpieza
+    # Limpieza final
     shutil.rmtree(work_dir)
 
 if st.button("🚀 COMENZAR PROCESO", type="primary"):
